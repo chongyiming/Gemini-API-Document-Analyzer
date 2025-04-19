@@ -23,6 +23,7 @@ def process_file(file_path):
 
 def process_text(file_path):
     with open(file_path, 'r') as file:
+        print(file.read())
         return file.read()
 
 
@@ -65,7 +66,7 @@ def predict():
     file_path = os.path.join(file_data_dir, files[0])
     content = process_file(file_path)
 
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model = genai.GenerativeModel("gemini-2.5-pro-preview-03-25")
 
     try:
         response = model.generate_content([user_prompt, content])
