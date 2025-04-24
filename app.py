@@ -8,44 +8,63 @@ from flask_cors import CORS
 from flask import Flask, request, jsonify
 from apscheduler.schedulers.background import BackgroundScheduler
 import atexit
-
+from io import BytesIO
+import tempfile
 app = Flask(__name__)
 CORS(app, origins=["http://localhost:3000", "https://fkfyp.vercel.app"])
-
-
-def process_file(file_path):
-    _, extension = os.path.splitext(file_path)
-    if extension.lower() == '.pdf':
-        return process_pdf(file_path)
-    else:
-        return process_text(file_path)
-
-
-def process_text(file_path):
-    with open(file_path, 'r') as file:
-        print(file.read())
-        return file.read()
-
-
-def process_pdf(file_path):
-    with open(file_path, 'rb') as file:
-        pdf_reader = PyPDF2.PdfReader(file)
-        text = ''
-        for page in pdf_reader.pages:
-            text += page.extract_text()
-        return text
-
 
 # Load environment variables from .env file
 load_dotenv()
 
 # Initialize Supabase client once at startup
 url = os.getenv("SUPABASE_URL") or "https://onroqajvamgdrnrjnzzu.supabase.co"
-key = os.getenv("SUPABASE_KEY") or "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ucm9xYWp2YW1nZHJucmpuenp1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDEzNjExNTksImV4cCI6MjA1NjkzNzE1OX0.2_O9ufR4G5hrP0i_gXOkeSr5KNKvZgnV9gyKtF8s3oY"
+key = os.getenv(
+    "SUPABASE_KEY") or "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ucm9xYWp2YW1nZHJucmpuenp1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDEzNjExNTksImV4cCI6MjA1NjkzNzE1OX0.2_O9ufR4G5hrP0i_gXOkeSr5KNKvZgnV9gyKtF8s3oY"
 supabase = create_client(url, key)
 
 # Configure genai with the API key
 genai.configure(api_key=os.getenv('API_KEY'))
+
+
+def process_file_content(file_content, file_name):
+    _, extension = os.path.splitext(file_name)
+    if extension.lower() == '.pdf':
+        return process_pdf(file_content)
+    else:
+        return process_text(file_content)
+
+
+def process_text(file_content):
+    return file_content.decode('utf-8')
+
+
+def process_pdf(file_content):
+    pdf_reader = PyPDF2.PdfReader(BytesIO(file_content))
+    text = ''
+    for page in pdf_reader.pages:
+        text += page.extract_text()
+    return text
+
+
+def get_latest_file_from_storage():
+    try:
+        # List all files in the storage bucket
+        files = supabase.storage.from_('file').list()
+        if not files:
+            return None, None
+
+        # Sort files by created_at (assuming the name includes timestamp or we have metadata)
+        # Here we'll just get the first file for simplicity
+        # In production, you might want to implement proper sorting
+        file_name = "history.csv"
+
+        # Download the file
+        file_content = supabase.storage.from_('file').download(file_name)
+        return file_content, file_name
+
+    except Exception as e:
+        print(f"Error getting file from storage: {str(e)}")
+        return None, None
 
 
 # ======== API Endpoint ================
@@ -58,13 +77,12 @@ def predict():
 
     user_prompt = data['prompt']
 
-    file_data_dir = 'file_data'
-    files = os.listdir(file_data_dir)
-    if not files:
-        return jsonify({'error': f'No files found in the {file_data_dir} directory.'}), 404
+    # Get file from Supabase storage
+    file_content, file_name = get_latest_file_from_storage()
+    if not file_content:
+        return jsonify({'error': 'No files found in storage.'}), 404
 
-    file_path = os.path.join(file_data_dir, files[0])
-    content = process_file(file_path)
+    content = process_file_content(file_content, file_name)
 
     model = genai.GenerativeModel("gemini-2.5-pro-preview-03-25")
 
@@ -81,26 +99,24 @@ def predict():
         }), 500
 
 
-try:
-    auth_response = supabase.auth.sign_in_with_password({
-        "email": os.getenv("SUPABASE_EMAIL") or "chongyiming1205@gmail.com",
-        "password": os.getenv("SUPABASE_PASSWORD") or "123456"
-    })
-    supabase.auth.session = auth_response.session
-except Exception as auth_error:
-    print(f"Failed to authenticate with Supabase: {auth_error}")
-    # Handle authentication failure appropriately
-
-
-def fetch_and_save_data():
+def authenticate_supabase():
     try:
-        # Check if we have a valid session
-        # Re-authenticate if session expired
         auth_response = supabase.auth.sign_in_with_password({
             "email": os.getenv("SUPABASE_EMAIL") or "chongyiming1205@gmail.com",
             "password": os.getenv("SUPABASE_PASSWORD") or "123456"
         })
         supabase.auth.session = auth_response.session
+        return True
+    except Exception as auth_error:
+        print(f"Failed to authenticate with Supabase: {auth_error}")
+        return False
+
+
+def fetch_and_save_data():
+    try:
+        # Re-authenticate if needed
+        if not authenticate_supabase():
+            return
 
         response = (
             supabase
@@ -110,23 +126,36 @@ def fetch_and_save_data():
             .execute()
         )
 
-        os.makedirs("file_data", exist_ok=True)
-        pd.DataFrame(response.data).to_csv("file_data/history.csv", index=False)
-        print(f"Data successfully updated")
+        # Create a temporary file
+        with tempfile.NamedTemporaryFile(suffix='.csv', delete=False) as tmp:
+            df = pd.DataFrame(response.data)
+            df.to_csv(tmp.name, index=False)
+
+            # Upload the temporary file
+            with open(tmp.name, 'rb') as f:
+                supabase.storage.from_('file').upload(
+                    'history.csv',
+                    f,
+                    {'content-type': 'text/csv', 'upsert': 'true'}
+                )
+
+        # Clean up the temporary file
+        os.unlink(tmp.name)
+        print("Data successfully updated in Supabase storage")
 
     except Exception as e:
         print(f"Error in fetch_and_save_data: {str(e)}")
-        # Consider adding retry logic or notification here
-
+        if 'tmp' in locals() and os.path.exists(tmp.name):
+            os.unlink(tmp.name)
 
 # Initialize scheduler
 scheduler = BackgroundScheduler()
 scheduler.add_job(
-    fetch_and_save_data,
-    'interval',
+    func=fetch_and_save_data,
+    trigger='interval',
     seconds=60,
-    max_instances=1,  # Prevent overlapping runs
-    misfire_grace_time=30  # Allow some leeway
+    max_instances=1,
+    misfire_grace_time=30
 )
 scheduler.start()
 
@@ -136,4 +165,3 @@ atexit.register(lambda: scheduler.shutdown())
 # ========== Run App ====================
 if __name__ == '__main__':
     app.run(debug=True)
-
