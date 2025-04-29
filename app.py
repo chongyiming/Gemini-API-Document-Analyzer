@@ -75,7 +75,7 @@ def predict():
     if not data or 'prompt' not in data:
         return jsonify({'error': 'Prompt is required in the request body'}), 400
 
-    user_prompt = data['prompt']
+    user_prompt = data['prompt']+",response should be without *,\n\n and \t"
 
     # Get file from Supabase storage
     file_content, file_name = get_latest_file_from_storage()
