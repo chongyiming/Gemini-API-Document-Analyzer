@@ -20,8 +20,7 @@ def predict():
     if not data or 'prompt' not in data:
         return jsonify({'error': 'Prompt is required in the request body'}), 400
 
-    user_prompt = data['prompt']
-
+    user_prompt = data['prompt']+",response should be without *,\n\n and \t"
     model = genai.GenerativeModel("gemini-2.5-pro-preview-03-25")
 
     try:
