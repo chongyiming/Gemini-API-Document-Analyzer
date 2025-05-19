@@ -11,7 +11,7 @@ import atexit
 from io import BytesIO
 import tempfile
 app = Flask(__name__)
-CORS(app, origins=["http://localhost:3000", "https://fkfyp.vercel.app"])
+CORS(app, origins=["http://localhost:3000", "https://mds17-fyp.vercel.app"])
 
 # Load environment variables from .env file
 load_dotenv()
@@ -121,7 +121,7 @@ def fetch_and_save_data():
         response = (
             supabase
             .table("history")
-            .select("created_at,norm_prob,mi_prob,class")
+            .select("created_at,email,norm_prob,mi_prob,class")
             .order("created_at", desc=True)
             .execute()
         )
