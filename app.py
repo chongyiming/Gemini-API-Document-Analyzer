@@ -4,7 +4,7 @@ import google.generativeai as genai
 from flask_cors import CORS
 from flask import Flask, request, jsonify
 app = Flask(__name__)
-CORS(app, origins=["http://localhost:3000", "https://fkfyp.vercel.app"])
+CORS(app, origins=["http://localhost:3000", "https://mds17-fyp.vercel.app"])
 
 # Load environment variables from .env file
 load_dotenv()
